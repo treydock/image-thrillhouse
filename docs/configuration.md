@@ -341,6 +341,7 @@ publish:
     prefix: compute/
     promote-only: true         # Optional: destination only; build never writes here
     promote-squashfs: false    # Optional: skip SquashFS during `promote --to s3` (default: true)
+    include-kernel-version: false  # Optional: include kernel version in boot artifact names (default: false)
 ```
 
 S3 publishing reads credentials from the `S3_ACCESS` and `S3_SECRET` environment variables.
@@ -402,6 +403,37 @@ publish:
 
 Defaults to `true`, so existing configs that promote to S3 continue to upload
 all three artifacts (rootfs/kernel/initramfs).
+
+### `include-kernel-version` (S3 only)
+
+`include-kernel-version: true` on an S3 publish block includes the kernel version
+in the boot artifact file names. When enabled, the kernel and initramfs are
+uploaded as:
+
+```
+<prefix><tag>/<arch>/vmlinuz-<kernel-version>
+<prefix><tag>/<arch>/initramfs-<kernel-version>.img
+```
+
+Instead of the generic names (`vmlinuz`, `initramfs.img`), the files carry the
+actual kernel version (e.g., `vmlinuz-5.14.0-427.el9.x86_64`,
+`initramfs-5.14.0-427.el9.x86_64.img`).
+
+Use this when you need to distinguish multiple images with the same release tag
+but different kernels, or when external tooling requires the kernel version in
+the artifact names.
+
+```yaml
+publish:
+  - type: s3
+    url: https://s3.amazonaws.com
+    bucket: boot-images
+    prefix: compute/
+    include-kernel-version: true
+```
+
+Defaults to `false`, so existing configs keep using the generic names where the
+tag's directory already identifies the image.
 
 ## Manifests
 

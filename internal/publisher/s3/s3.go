@@ -31,13 +31,14 @@ import (
 // S3Publisher uploads boot images to S3-compatible storage.
 // It creates a SquashFS rootfs and uploads it along with the kernel and initramfs.
 type S3Publisher struct {
-	endpoint        string // S3 endpoint URL
-	bucket          string // S3 bucket name
-	prefix          string // S3 key prefix
-	arch            string // target arch for the key layout ("" omits the arch segment)
-	accessKey       string // AWS access key ID
-	secretKey       string // AWS secret access key
-	promoteSquashfs bool   // whether to include SquashFS during promote (default: true)
+	endpoint             string // S3 endpoint URL
+	bucket               string // S3 bucket name
+	prefix               string // S3 key prefix
+	arch                 string // target arch for the key layout ("" omits the arch segment)
+	accessKey            string // AWS access key ID
+	secretKey            string // AWS secret access key
+	promoteSquashfs      bool   // whether to include SquashFS during promote (default: true)
+	includeKernelVersion bool   // whether to include kernel version in file names (default: false)
 }
 
 // New creates a new S3Publisher with the specified configuration.
@@ -52,15 +53,17 @@ type S3Publisher struct {
 //   - accessKey: AWS access key ID or S3-compatible access key
 //   - secretKey: AWS secret access key or S3-compatible secret
 //   - promoteSquashfs: whether to include SquashFS during promote (default: true)
-func New(endpoint, bucket, prefix, arch, accessKey, secretKey string, promoteSquashfs bool) *S3Publisher {
+//   - includeKernelVersion: whether to include kernel version in file names (default: false)
+func New(endpoint, bucket, prefix, arch, accessKey, secretKey string, promoteSquashfs bool, includeKernelVersion bool) *S3Publisher {
 	return &S3Publisher{
-		endpoint:        endpoint,
-		bucket:          bucket,
-		prefix:          prefix,
-		arch:            arch,
-		accessKey:       accessKey,
-		secretKey:       secretKey,
-		promoteSquashfs: promoteSquashfs,
+		endpoint:             endpoint,
+		bucket:               bucket,
+		prefix:               prefix,
+		arch:                 arch,
+		accessKey:            accessKey,
+		secretKey:            secretKey,
+		promoteSquashfs:      promoteSquashfs,
+		includeKernelVersion: includeKernelVersion,
 	}
 }
 
@@ -90,17 +93,24 @@ func (s *S3Publisher) rootfsKey(tag string) string {
 // objectKeys returns the S3 keys for a tag's three boot artifacts, laid out as
 //
 //	<prefix><tag>/<arch>/rootfs.squashfs
-//	<prefix><tag>/<arch>/vmlinuz
-//	<prefix><tag>/<arch>/initramfs.img
+//	<prefix><tag>/<arch>/vmlinuz[-<kver>]
+//	<prefix><tag>/<arch>/initramfs[-<kver>].img
 //
-// The kernel and initramfs get fixed, generic names regardless of the kernel
-// version or the distro's /boot naming convention (initramfs-<kver>.img,
-// initrd-<kver>, initrd.img-<kver>). Each tag already has its own directory,
-// so the path identifies the image and consumers can find its boot artifacts
-// without knowing which kernel it carries.
-func (s *S3Publisher) objectKeys(tag string) (rootfs, kernel, initramfs string) {
+// When includeKernelVersion is false (default), the kernel and initramfs get
+// fixed, generic names regardless of the kernel version or the distro's /boot
+// naming convention (initramfs-<kver>.img, initrd-<kver>, initrd.img-<kver>).
+// Each tag already has its own directory, so the path identifies the image and
+// consumers can find its boot artifacts without knowing which kernel it carries.
+// When includeKernelVersion is true, the kernel version is appended to the file
+// names to distinguish multiple images with the same release tag but different
+// kernels.
+func (s *S3Publisher) objectKeys(tag, kernelVersion string) (rootfs, kernel, initramfs string) {
 	base := s.baseKey(tag)
-	return base + "rootfs.squashfs", base + "vmlinuz", base + "initramfs.img"
+	rootfsKey := base + "rootfs.squashfs"
+	if s.includeKernelVersion && kernelVersion != "" {
+		return rootfsKey, base + "vmlinuz-" + kernelVersion, base + "initramfs-" + kernelVersion + ".img"
+	}
+	return rootfsKey, base + "vmlinuz", base + "initramfs.img"
 }
 
 // Publish creates a SquashFS image and uploads it to S3 along with kernel and initramfs.
@@ -151,7 +161,7 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 
 	uploader := manager.NewUploader(client)
 
-	rootfsKey, vmlinuzKey, initramfsKey := s.objectKeys(tag)
+	rootfsKey, vmlinuzKey, initramfsKey := s.objectKeys(tag, kernelVersion)
 
 	// Step 3: Create and upload rootfs (SquashFS) if enabled
 	if s.promoteSquashfs {

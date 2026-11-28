@@ -319,7 +319,12 @@ func newS3Publisher(p config.Publish, arch string) (*s3pub.S3Publisher, error) {
 	if p.PromoteSquashfs != nil {
 		promoteSquashfs = *p.PromoteSquashfs
 	}
-	return s3pub.New(p.URL, p.Bucket, p.Prefix, arch, accessKey, secretKey, promoteSquashfs), nil
+	// Default to false (no kernel version in file names) when the field is unset
+	includeKernelVersion := false
+	if p.IncludeKernelVersion != nil {
+		includeKernelVersion = *p.IncludeKernelVersion
+	}
+	return s3pub.New(p.URL, p.Bucket, p.Prefix, arch, accessKey, secretKey, promoteSquashfs, includeKernelVersion), nil
 }
 
 // resolveTargetTypes validates --to and de-duplicates it, preserving the order

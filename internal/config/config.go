@@ -253,6 +253,12 @@ type Publish struct {
 	// when S3 is only for network boot and a separate `promote --to squashfs`
 	// handles local image creation.
 	PromoteSquashfs *bool `yaml:"promote-squashfs"`
+
+	// IncludeKernelVersion controls whether the S3 publisher includes the kernel
+	// version in the boot artifact file names (vmlinuz and initramfs). When false
+	// (default), files are named generically (vmlinuz, initramfs.img). When true,
+	// files include the kernel version (e.g., vmlinuz-5.14.0-427, initramfs-5.14.0-427.img).
+	IncludeKernelVersion *bool `yaml:"include-kernel-version"`
 }
 
 // Used for switch-case so I can make things easier add in the future

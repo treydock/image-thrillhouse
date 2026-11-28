@@ -131,7 +131,7 @@ func TestPublish_UploadsGenericKeys(t *testing.T) {
 
 	// Mirrors Omnia's layout: the OS version is the tag and no arch segment is
 	// configured.
-	pub := New(ts.URL, "boot-images", "slurm_control_node_rhel_10_0_x86_64/rhel-slurm-imgth/", "", "access", "secret", true)
+	pub := New(ts.URL, "boot-images", "slurm_control_node_rhel_10_0_x86_64/rhel-slurm-imgth/", "", "access", "secret", true, false)
 
 	err := pub.Publish(context.Background(), &fakeContainer{mountPath: root}, "slurm", []string{"10.0"}, nil)
 	if err != nil {
@@ -164,7 +164,7 @@ func TestPublish_NormalizesDebianInitrdName(t *testing.T) {
 	ts := httptest.NewServer(rec)
 	defer ts.Close()
 
-	pub := New(ts.URL, "boot-images", "compute/", "x86_64", "access", "secret", true)
+	pub := New(ts.URL, "boot-images", "compute/", "x86_64", "access", "secret", true, false)
 
 	if err := pub.Publish(context.Background(), &fakeContainer{mountPath: root}, "compute", []string{"bookworm"}, nil); err != nil {
 		t.Fatalf("Publish returned error: %v", err)
@@ -175,6 +175,38 @@ func TestPublish_NormalizesDebianInitrdName(t *testing.T) {
 		base + "initramfs.img",
 		base + "rootfs.squashfs",
 		base + "vmlinuz",
+	}
+	if got := rec.keys(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("uploaded keys =\n %v\nwant\n %v", got, want)
+	}
+}
+
+// TestPublish_WithKernelVersion confirms that when includeKernelVersion is true,
+// the uploaded keys include the kernel version in the file names.
+func TestPublish_WithKernelVersion(t *testing.T) {
+	if _, err := exec.LookPath("mksquashfs"); err != nil {
+		t.Skip("mksquashfs not installed; skipping end-to-end publish test")
+	}
+
+	const kver = "6.12.0-55.94.1.el10_0.x86_64"
+	root := newFakeRootfs(t, kver, "initramfs-"+kver+".img")
+
+	rec := &uploadRecorder{}
+	ts := httptest.NewServer(rec)
+	defer ts.Close()
+
+	// Enable kernel version in file names
+	pub := New(ts.URL, "boot-images", "compute/", "x86_64", "access", "secret", true, true)
+
+	if err := pub.Publish(context.Background(), &fakeContainer{mountPath: root}, "compute", []string{"release-1.0"}, nil); err != nil {
+		t.Fatalf("Publish returned error: %v", err)
+	}
+
+	base := "/boot-images/compute/release-1.0/x86_64/"
+	want := []string{
+		base + "initramfs-" + kver + ".img",
+		base + "rootfs.squashfs",
+		base + "vmlinuz-" + kver,
 	}
 	if got := rec.keys(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("uploaded keys =\n %v\nwant\n %v", got, want)

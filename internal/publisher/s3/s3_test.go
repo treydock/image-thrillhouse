@@ -47,7 +47,7 @@ func TestExists_ProbesOnlyPrimaryTag(t *testing.T) {
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
-	p := New(ts.URL, "test-bucket", "img/", "x86_64", "access", "secret", true)
+	p := New(ts.URL, "test-bucket", "img/", "x86_64", "access", "secret", true, false)
 
 	ok, err := p.Exists(context.Background(), "test-image", []string{"1.0", "latest"})
 	if err != nil {
@@ -68,7 +68,7 @@ func TestExists_MissingPrimaryTag(t *testing.T) {
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
-	p := New(ts.URL, "test-bucket", "img/", "x86_64", "access", "secret", true)
+	p := New(ts.URL, "test-bucket", "img/", "x86_64", "access", "secret", true, false)
 
 	ok, err := p.Exists(context.Background(), "test-image", []string{"1.0"})
 	if err != nil {
@@ -81,50 +81,65 @@ func TestExists_MissingPrimaryTag(t *testing.T) {
 
 func TestNew(t *testing.T) {
 	tests := []struct {
-		name            string
-		endpoint        string
-		bucket          string
-		prefix          string
-		arch            string
-		accessKey       string
-		secretKey       string
-		promoteSquashfs bool
+		name                 string
+		endpoint             string
+		bucket               string
+		prefix               string
+		arch                 string
+		accessKey            string
+		secretKey            string
+		promoteSquashfs      bool
+		includeKernelVersion bool
 	}{
 		{
-			name:            "AWS S3",
-			endpoint:        "https://s3.amazonaws.com",
-			bucket:          "boot-images",
-			prefix:          "compute/",
-			arch:            "x86_64",
-			accessKey:       "AKIAIOSFODNN7EXAMPLE",
-			secretKey:       "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-			promoteSquashfs: true,
+			name:                 "AWS S3",
+			endpoint:             "https://s3.amazonaws.com",
+			bucket:               "boot-images",
+			prefix:               "compute/",
+			arch:                 "x86_64",
+			accessKey:            "AKIAIOSFODNN7EXAMPLE",
+			secretKey:            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+			promoteSquashfs:      true,
+			includeKernelVersion: false,
 		},
 		{
-			name:            "MinIO",
-			endpoint:        "http://localhost:9000",
-			bucket:          "images",
-			prefix:          "test/",
-			arch:            "aarch64",
-			accessKey:       "minioadmin",
-			secretKey:       "minioadmin",
-			promoteSquashfs: true,
+			name:                 "MinIO",
+			endpoint:             "http://localhost:9000",
+			bucket:               "images",
+			prefix:               "test/",
+			arch:                 "aarch64",
+			accessKey:            "minioadmin",
+			secretKey:            "minioadmin",
+			promoteSquashfs:      true,
+			includeKernelVersion: false,
 		},
 		{
-			name:            "custom S3, no arch",
-			endpoint:        "https://s3.example.com",
-			bucket:          "boot",
-			prefix:          "",
-			arch:            "",
-			accessKey:       "access",
-			secretKey:       "secret",
-			promoteSquashfs: true,
+			name:                 "custom S3, no arch",
+			endpoint:             "https://s3.example.com",
+			bucket:               "boot",
+			prefix:               "",
+			arch:                 "",
+			accessKey:            "access",
+			secretKey:            "secret",
+			promoteSquashfs:      true,
+			includeKernelVersion: false,
+		},
+		{
+			name:                 "kernel version enabled",
+			endpoint:             "https://s3.example.com",
+			bucket:               "boot",
+			prefix:               "img/",
+			arch:                 "x86_64",
+			accessKey:            "access",
+			secretKey:            "secret",
+			promoteSquashfs:      true,
+			includeKernelVersion: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pub := New(tt.endpoint, tt.bucket, tt.prefix, tt.arch, tt.accessKey, tt.secretKey, tt.promoteSquashfs)
+			pub := New(tt.endpoint, tt.bucket, tt.prefix, tt.arch, tt.accessKey, tt.secretKey, tt.promoteSquashfs, tt.includeKernelVersion)
 			if pub == nil {
 				t.Fatal("New() returned nil")
 			}
@@ -149,12 +164,15 @@ func TestNew(t *testing.T) {
 			if pub.promoteSquashfs != tt.promoteSquashfs {
 				t.Errorf("promoteSquashfs = %v, want %v", pub.promoteSquashfs, tt.promoteSquashfs)
 			}
+			if pub.includeKernelVersion != tt.includeKernelVersion {
+				t.Errorf("includeKernelVersion = %v, want %v", pub.includeKernelVersion, tt.includeKernelVersion)
+			}
 		})
 	}
 }
 
 func TestS3Publisher_Type(t *testing.T) {
-	pub := New("https://s3.amazonaws.com", "bucket", "prefix/", "x86_64", "key", "secret", true)
+	pub := New("https://s3.amazonaws.com", "bucket", "prefix/", "x86_64", "key", "secret", true, false)
 
 	if _, ok := interface{}(pub).(*S3Publisher); !ok {
 		t.Error("New() did not return *S3Publisher")
@@ -165,34 +183,86 @@ func TestS3Publisher_Type(t *testing.T) {
 // generic names under the tag's directory.
 func TestObjectKeys(t *testing.T) {
 	tests := []struct {
-		name   string
-		prefix string
-		arch   string
-		tag    string
-		want   string // directory the three artifacts live under
+		name             string
+		prefix           string
+		arch             string
+		tag              string
+		kernelVersion    string
+		includeKernelVer bool
+		wantRootfs       string
+		wantKernel       string
+		wantInitramfs    string
 	}{
-		{"prefix and arch", "compute/", "x86_64", "release-0.0.1", "compute/release-0.0.1/x86_64/"},
-		{"no arch segment when arch empty", "compute/", "", "abc123", "compute/abc123/"},
-		{"no prefix", "", "aarch64", "release-1.0", "release-1.0/aarch64/"},
 		{
-			"omnia release-tag layout",
-			"slurm_control_node_rhel_10_0_x86_64/rhel-slurm-imgth/", "", "10.0",
-			"slurm_control_node_rhel_10_0_x86_64/rhel-slurm-imgth/10.0/",
+			name:   "prefix and arch, no kernel version",
+			prefix: "compute/", arch: "x86_64", tag: "release-0.0.1",
+			kernelVersion: "5.14.0-427", includeKernelVer: false,
+			wantRootfs:    "compute/release-0.0.1/x86_64/rootfs.squashfs",
+			wantKernel:    "compute/release-0.0.1/x86_64/vmlinuz",
+			wantInitramfs: "compute/release-0.0.1/x86_64/initramfs.img",
+		},
+		{
+			name:   "no arch segment when arch empty",
+			prefix: "compute/", arch: "", tag: "abc123",
+			kernelVersion: "5.14.0-427", includeKernelVer: false,
+			wantRootfs:    "compute/abc123/rootfs.squashfs",
+			wantKernel:    "compute/abc123/vmlinuz",
+			wantInitramfs: "compute/abc123/initramfs.img",
+		},
+		{
+			name:   "no prefix",
+			prefix: "", arch: "aarch64", tag: "release-1.0",
+			kernelVersion: "6.1.0-18", includeKernelVer: false,
+			wantRootfs:    "release-1.0/aarch64/rootfs.squashfs",
+			wantKernel:    "release-1.0/aarch64/vmlinuz",
+			wantInitramfs: "release-1.0/aarch64/initramfs.img",
+		},
+		{
+			name:   "omnia release-tag layout",
+			prefix: "slurm_control_node_rhel_10_0_x86_64/rhel-slurm-imgth/", arch: "", tag: "10.0",
+			kernelVersion: "5.14.0-427", includeKernelVer: false,
+			wantRootfs:    "slurm_control_node_rhel_10_0_x86_64/rhel-slurm-imgth/10.0/rootfs.squashfs",
+			wantKernel:    "slurm_control_node_rhel_10_0_x86_64/rhel-slurm-imgth/10.0/vmlinuz",
+			wantInitramfs: "slurm_control_node_rhel_10_0_x86_64/rhel-slurm-imgth/10.0/initramfs.img",
+		},
+		{
+			name:   "kernel version included",
+			prefix: "compute/", arch: "x86_64", tag: "release-0.0.1",
+			kernelVersion: "5.14.0-427.el9.x86_64", includeKernelVer: true,
+			wantRootfs:    "compute/release-0.0.1/x86_64/rootfs.squashfs",
+			wantKernel:    "compute/release-0.0.1/x86_64/vmlinuz-5.14.0-427.el9.x86_64",
+			wantInitramfs: "compute/release-0.0.1/x86_64/initramfs-5.14.0-427.el9.x86_64.img",
+		},
+		{
+			name:   "kernel version included with short version",
+			prefix: "compute/", arch: "aarch64", tag: "v1.2.3",
+			kernelVersion: "6.1.0-18-amd64", includeKernelVer: true,
+			wantRootfs:    "compute/v1.2.3/aarch64/rootfs.squashfs",
+			wantKernel:    "compute/v1.2.3/aarch64/vmlinuz-6.1.0-18-amd64",
+			wantInitramfs: "compute/v1.2.3/aarch64/initramfs-6.1.0-18-amd64.img",
+		},
+		{
+			name:   "kernel version enabled but empty kernel version string",
+			prefix: "compute/", arch: "x86_64", tag: "release-0.0.1",
+			kernelVersion: "", includeKernelVer: true,
+			wantRootfs:    "compute/release-0.0.1/x86_64/rootfs.squashfs",
+			wantKernel:    "compute/release-0.0.1/x86_64/vmlinuz",
+			wantInitramfs: "compute/release-0.0.1/x86_64/initramfs.img",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pub := New("", "", tt.prefix, tt.arch, "", "", true)
-			rootfs, kernel, initramfs := pub.objectKeys(tt.tag)
-			if want := tt.want + "rootfs.squashfs"; rootfs != want {
-				t.Errorf("rootfs = %q, want %q", rootfs, want)
+			pub := New("", "", tt.prefix, tt.arch, "", "", true, tt.includeKernelVer)
+			rootfs, kernel, initramfs := pub.objectKeys(tt.tag, tt.kernelVersion)
+			if rootfs != tt.wantRootfs {
+				t.Errorf("rootfs = %q, want %q", rootfs, tt.wantRootfs)
 			}
-			if want := tt.want + "vmlinuz"; kernel != want {
-				t.Errorf("kernel = %q, want %q", kernel, want)
+			if kernel != tt.wantKernel {
+				t.Errorf("kernel = %q, want %q", kernel, tt.wantKernel)
 			}
-			if want := tt.want + "initramfs.img"; initramfs != want {
-				t.Errorf("initramfs = %q, want %q", initramfs, want)
+			if initramfs != tt.wantInitramfs {
+				t.Errorf("initramfs = %q, want %q", initramfs, tt.wantInitramfs)
 			}
 		})
 	}
@@ -202,13 +272,13 @@ func TestObjectKeys(t *testing.T) {
 // be derivable from prefix/tag/arch alone, because Exists is called before any
 // image is pulled or mounted, and must match what Publish writes.
 func TestRootfsKey(t *testing.T) {
-	pub := New("", "", "compute/", "x86_64", "", "", true)
+	pub := New("", "", "compute/", "x86_64", "", "", true, false)
 
 	want := "compute/10.0/x86_64/rootfs.squashfs"
 	if got := pub.rootfsKey("10.0"); got != want {
 		t.Errorf("rootfsKey = %q, want %q", got, want)
 	}
-	if rootfs, _, _ := pub.objectKeys("10.0"); rootfs != want {
+	if rootfs, _, _ := pub.objectKeys("10.0", "5.14.0-427"); rootfs != want {
 		t.Errorf("objectKeys rootfs = %q, want %q", rootfs, want)
 	}
 }
