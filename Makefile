@@ -32,7 +32,15 @@ GOFLAGS=-v
 # backend — see docs/development.md:
 #
 #	make build BUILD_TAGS="$(BUILD_TAGS) containers_image_openpgp"
+#
+# On macOS (GOOS=darwin), containers_image_openpgp is added automatically to
+# avoid the gpgme dependency. Use go env to detect the target OS.
+GOOS := $(shell go env GOOS)
+ifeq ($(GOOS),darwin)
+BUILD_TAGS=exclude_graphdriver_btrfs exclude_graphdriver_devicemapper containers_image_openpgp
+else
 BUILD_TAGS=exclude_graphdriver_btrfs exclude_graphdriver_devicemapper
+endif
 # Stamp the version into the binary so `image-thrillhouse version` reports
 # the git-derived GIT_VERSION.
 LDFLAGS=-ldflags "-X main.version=$(GIT_VERSION)"
